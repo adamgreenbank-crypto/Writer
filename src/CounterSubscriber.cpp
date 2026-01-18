@@ -8,6 +8,54 @@
 
 #include <ace/Log_Msg.h>
 
+class CounterDataReaderListener
+  : public virtual OpenDDS::DCPS::LocalObject<DDS::DataReaderListener> {
+public:
+  void on_requested_deadline_missed(
+      DDS::DataReader_ptr,
+      const DDS::RequestedDeadlineMissedStatus&) override {}
+
+  void on_requested_incompatible_qos(
+      DDS::DataReader_ptr,
+      const DDS::RequestedIncompatibleQosStatus&) override {}
+
+  void on_sample_rejected(
+      DDS::DataReader_ptr,
+      const DDS::SampleRejectedStatus&) override {}
+
+  void on_liveliness_changed(
+      DDS::DataReader_ptr,
+      const DDS::LivelinessChangedStatus&) override {}
+
+  void on_subscription_matched(
+      DDS::DataReader_ptr,
+      const DDS::SubscriptionMatchedStatus&) override {}
+
+  void on_sample_lost(
+      DDS::DataReader_ptr,
+      const DDS::SampleLostStatus&) override {}
+
+  void on_data_available(DDS::DataReader_ptr reader) override
+  {
+    Example::CounterDataReader_var counter_reader =
+        Example::CounterDataReader::_narrow(reader);
+
+    if (!counter_reader) {
+      ACE_ERROR((LM_ERROR, "Failed to narrow CounterDataReader.\n"));
+      return;
+    }
+
+    Example::Counter counter;
+    DDS::SampleInfo info;
+
+    while (counter_reader->take_next_sample(counter, info) == DDS::RETCODE_OK) {
+      if (info.valid_data) {
+        ACE_DEBUG((LM_INFO, "Counter sample received: %d\n", counter.value));
+      }
+    }
+  }
+};
+
 int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
 {
   DDS::DomainParticipantFactory_var dpf =
@@ -50,10 +98,12 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     ACE_ERROR_RETURN((LM_ERROR, "Failed to create subscriber.\n"), 1);
   }
 
+  DDS::DataReaderListener_var listener(new CounterDataReaderListener);
+
   DDS::DataReader_var reader = subscriber->create_datareader(
       topic,
       DATAREADER_QOS_DEFAULT,
-      0,
+      listener,
       OpenDDS::DCPS::DEFAULT_STATUS_MASK);
 
   if (!reader) {
@@ -68,13 +118,6 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
   DDS::WaitSet_var wait_set = new DDS::WaitSet();
   wait_set->attach_condition(status_condition);
 
-  Example::CounterDataReader_var counter_reader =
-      Example::CounterDataReader::_narrow(reader);
-
-  if (!counter_reader) {
-    ACE_ERROR_RETURN((LM_ERROR, "Failed to narrow CounterDataReader.\n"), 1);
-  }
-
   while (true) {
     DDS::ConditionSeq conditions;
     DDS::Duration_t timeout = {DDS::DURATION_INFINITE_SEC, DDS::DURATION_INFINITE_NSEC};
@@ -82,17 +125,6 @@ int ACE_TMAIN(int argc, ACE_TCHAR* argv[])
     if (wait_set->wait(conditions, timeout) != DDS::RETCODE_OK) {
       ACE_ERROR((LM_ERROR, "WaitSet failed.\n"));
       break;
-    }
-
-    Example::Counter counter;
-    DDS::SampleInfo info;
-
-    DDS::ReturnCode_t result = counter_reader->take_next_sample(counter, info);
-    while (result == DDS::RETCODE_OK) {
-      if (info.valid_data) {
-        ACE_DEBUG((LM_INFO, "Counter sample received: %d\n", counter.value));
-      }
-      result = counter_reader->take_next_sample(counter, info);
     }
   }
 
